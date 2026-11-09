@@ -21,6 +21,8 @@ After you confirm the dialog:
 - A pairing prompt opens for the `127.0.0.1` server.
 - **Folder drag-and-drop into the composer is unavailable** while using the tray-managed loopback server.
 
+To go back to the desktop's own server, set `localEnvironmentEnabled` to `true` (or remove the key) in T3 Code's `desktop-settings.json` and restart T3 Code. A missing file, a missing key, or `null` all count as enabled.
+
 The NSIS installer does **not** change T3 Code settings. The tray icon is the T3 Code icon, stored at `internal/assets/tray.ico`.
 
 ## Install
@@ -33,11 +35,12 @@ Build `dist\T3ServeTray-setup.exe`, then run it. The setup is per-user and does 
 .\build.ps1
 ```
 
-`build.ps1` runs `go test ./...`, generates `cmd\t3tray\rsrc.syso` from the icon (that file is not committed), builds `dist\t3tray.exe` with `-H windowsgui`, and runs `makensis` on `installer\T3ServeTray.nsi` when `makensis` is on `PATH`.
+`build.ps1` stops at the first failing step. It runs `go mod tidy`, `go vet ./...`, and `go test ./...`, generates `cmd\t3tray\rsrc.syso` from the icon (that file is not committed), builds `dist\t3tray.exe` with `-H windowsgui`, and runs `makensis` on `installer\T3ServeTray.nsi` when `makensis` is on `PATH`.
 
 Manual steps:
 
 ```powershell
+go vet ./...
 go test ./...
 go build -ldflags "-H windowsgui" -o dist\t3tray.exe ./cmd/t3tray
 makensis installer\T3ServeTray.nsi
@@ -50,6 +53,7 @@ Pushes to `main` and pull requests build the installer and upload it as an Actio
 ## Tests
 
 ```powershell
+go vet ./...
 go test ./...
 ```
 
@@ -61,3 +65,7 @@ Unit tests use temporary directories only.
 - Go 1.22+
 - T3 CLI installed by T3 Code at `%USERPROFILE%\.t3\bin\t3.cmd`
 - Optional: NSIS 3 for the installer
+
+## License
+
+MIT, see `LICENSE`. `internal/assets/tray.ico` is the T3 Code product icon and is not covered by that license; see `NOTICE`.

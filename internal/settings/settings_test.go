@@ -103,3 +103,14 @@ func TestMergeDisableLocalEnvironment_AtomicWrite(t *testing.T) {
 		t.Fatal(m)
 	}
 }
+
+func TestLocalEnvironmentEnabled_NullIsEnabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "desktop-settings.json")
+	if err := os.WriteFile(path, []byte(`{"localEnvironmentEnabled":null,"k":1}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !LocalEnvironmentEnabled(path) {
+		t.Fatal("null should be enabled")
+	}
+}

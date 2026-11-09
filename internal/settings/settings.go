@@ -74,7 +74,7 @@ func ParseDesktopSettings(data []byte) (map[string]json.RawMessage, error) {
 }
 
 // LocalEnvironmentEnabled reports whether the desktop app will start its own server.
-// T3 Code treats a missing file or a missing key as enabled. Only an explicit false turns it off.
+// T3 Code treats a missing file, a missing key, or a null value as enabled. Only an explicit false turns it off.
 func LocalEnvironmentEnabled(path string) bool {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -88,11 +88,12 @@ func LocalEnvironmentEnabled(path string) bool {
 	if !ok {
 		return true
 	}
-	var enabled bool
-	if err := json.Unmarshal(raw, &enabled); err != nil {
+	// json.Unmarshal into a plain bool leaves it unchanged on null, so decode into a pointer.
+	var enabled *bool
+	if err := json.Unmarshal(raw, &enabled); err != nil || enabled == nil {
 		return true
 	}
-	return enabled
+	return *enabled
 }
 
 // ApplyDisableLocal sets the key and returns serialized JSON (compact).
