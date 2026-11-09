@@ -1,0 +1,13 @@
+T3 Serve Tray
+
+The MIT License in LICENSE covers the source code in this repository.
+
+Third-party artwork
+-------------------
+internal/assets/tray.ico is the T3 Code product icon. It was extracted from an
+installed T3 Code application with tools/extracticon and is used here as the
+tray, executable, and installer icon so this companion app is recognizable next
+to T3 Code. It is not covered by the MIT License. It remains the property of its
+owner and is included only for use with this companion app. Do not reuse it in
+unrelated products or imply endorsement by the T3 Code authors. This project is
+an independent companion app and is not affiliated with T3 Code.

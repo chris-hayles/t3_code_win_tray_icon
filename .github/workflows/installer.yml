@@ -26,6 +26,12 @@ jobs:
           choco install nsis --no-progress -y
           "${env:ProgramFiles(x86)}\NSIS" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
 
+      - name: Vet
+        shell: pwsh
+        run: |
+          go vet ./...
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Build
         shell: pwsh
         run: |

@@ -45,7 +45,7 @@ func SetClipboardText(text string) error {
 	if ptr == 0 {
 		return fmt.Errorf("GlobalLock: %v", e)
 	}
-	dest := unsafe.Slice((*uint16)(unsafe.Pointer(ptr)), len(utf16))
+	dest := unsafe.Slice((*uint16)(*(*unsafe.Pointer)(unsafe.Pointer(&ptr))), len(utf16))
 	copy(dest, utf16)
 	globalUnlock.Call(h)
 	r, _, e = setClipboardData.Call(cfUnicodeText, h)

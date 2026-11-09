@@ -112,5 +112,5 @@ func loadResource(mod windows.Handle, name, kind uintptr) []byte {
 	if n == 0 {
 		return nil
 	}
-	return append([]byte(nil), unsafe.Slice((*byte)(unsafe.Pointer(ptr)), n)...)
+	return append([]byte(nil), unsafe.Slice((*byte)(*(*unsafe.Pointer)(unsafe.Pointer(&ptr))), n)...)
 }

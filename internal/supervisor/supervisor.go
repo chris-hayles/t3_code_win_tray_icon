@@ -39,6 +39,19 @@ type Supervisor struct {
 	supLog         *os.File
 	foreignAtStart bool
 	loopRunning    bool
+
+	// Seams for tests; nil means the real implementation.
+	hooks *loopHooks
+}
+
+// loopHooks replaces the process-touching steps of the restart loop in tests.
+type loopHooks struct {
+	cliPresent   func() bool
+	start        func() bool
+	wait         func()
+	foreignAfter func() bool
+	now          func() time.Time
+	sleep        func(time.Duration) bool
 }
 
 func New() (*Supervisor, error) {
@@ -101,13 +114,14 @@ func (s *Supervisor) StartLoop() {
 }
 
 func (s *Supervisor) loop() {
+	h := s.loopHooksOrDefault()
 	for {
 		if !s.sleepOrStop(0) {
 			return
 		}
-		if _, err := os.Stat(paths.T3Cmd()); err != nil {
+		if !h.cliPresent() {
 			s.writeSup("t3.cmd missing")
-			if !s.sleepOrStop(2 * time.Second) {
+			if !h.sleep(2 * time.Second) {
 				return
 			}
 			continue
@@ -117,27 +131,75 @@ func (s *Supervisor) loop() {
 		attempt := s.attempt
 		s.mu.Unlock()
 
-		if s.startOnce() {
-			s.waitRun()
-			s.mu.Lock()
-			if backoff.ShouldResetUptime(time.Since(s.startedAt)) {
-				s.attempt = backoff.NextAttemptAfterReset() - 1
-			}
-			s.mu.Unlock()
-			st, _, _ := ownership.ClassifyFile(paths.ServerRuntimeJSON(), winutil.ProcessAlive, s.IsOwnedPID)
-			if st == ownership.Foreign {
-				s.setForeign(true)
-				s.writeSup("detected foreign owner after exit")
-				return
-			}
-		} else {
+		if !h.start() {
 			delay := backoff.Delay(attempt)
 			s.writeSup(fmt.Sprintf("start failed, backoff %v", delay))
-			if !s.sleepOrStop(delay) {
+			if !h.sleep(delay) {
+				return
+			}
+			continue
+		}
+
+		h.wait()
+		s.mu.Lock()
+		uptime := h.now().Sub(s.startedAt)
+		reset := backoff.ShouldResetUptime(uptime)
+		if reset {
+			s.attempt = backoff.NextAttemptAfterReset() - 1
+		}
+		s.mu.Unlock()
+		if h.foreignAfter() {
+			s.setForeign(true)
+			s.writeSup("detected foreign owner after exit")
+			return
+		}
+		if !reset {
+			// The server started but exited quickly; back off so a crash loop cannot spin.
+			delay := backoff.Delay(attempt)
+			s.writeSup(fmt.Sprintf("serve exited after %v, backoff %v", uptime.Round(time.Millisecond), delay))
+			if !h.sleep(delay) {
 				return
 			}
 		}
 	}
+}
+
+func (s *Supervisor) loopHooksOrDefault() loopHooks {
+	h := loopHooks{
+		cliPresent: func() bool {
+			_, err := os.Stat(paths.T3Cmd())
+			return err == nil
+		},
+		start: s.startOnce,
+		wait:  s.waitRun,
+		foreignAfter: func() bool {
+			st, _, _ := ownership.ClassifyFile(paths.ServerRuntimeJSON(), winutil.ProcessAlive, s.IsOwnedPID)
+			return st == ownership.Foreign
+		},
+		now:   time.Now,
+		sleep: s.sleepOrStop,
+	}
+	if t := s.hooks; t != nil {
+		if t.cliPresent != nil {
+			h.cliPresent = t.cliPresent
+		}
+		if t.start != nil {
+			h.start = t.start
+		}
+		if t.wait != nil {
+			h.wait = t.wait
+		}
+		if t.foreignAfter != nil {
+			h.foreignAfter = t.foreignAfter
+		}
+		if t.now != nil {
+			h.now = t.now
+		}
+		if t.sleep != nil {
+			h.sleep = t.sleep
+		}
+	}
+	return h
 }
 
 func (s *Supervisor) sleepOrStop(d time.Duration) bool {
