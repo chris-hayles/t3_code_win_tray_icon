@@ -131,21 +131,46 @@ func TestBusy_MissingDesktopTarget(t *testing.T) {
 	}
 }
 
-func TestBusy_UpdatedRelaunch(t *testing.T) {
-	d := &Detector{
-		Now:   func() time.Time { return time.Unix(1_700_000_000, 0) },
-		Paths: Paths{LocalAppData: t.TempDir(), UserProfile: t.TempDir()},
-		List: func() ([]Proc, error) {
-			return []Proc{{
-				Name:    "T3 Code (Beta).exe",
-				ExePath: `C:\Users\x\AppData\Local\Programs\t3-code-desktop\T3 Code (Beta).exe`,
-				CmdLine: `"C:\Users\x\AppData\Local\Programs\t3-code-desktop\T3 Code (Beta).exe" --updated`,
-			}}, nil
-		},
-		Stat: func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+func TestBusy_UpdatedRelaunchClearsWhileDesktopStaysAlive(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	desktop := Proc{
+		PID:     4242,
+		Name:    "T3 Code (Beta).exe",
+		ExePath: `C:\Users\x\AppData\Local\Programs\t3-code-desktop\T3 Code (Beta).exe`,
+		CmdLine: `"C:\Users\x\AppData\Local\Programs\t3-code-desktop\T3 Code (Beta).exe" --updated`,
 	}
-	busy, _ := d.Busy()
+	d := &Detector{
+		Now:   func() time.Time { return now },
+		Paths: Paths{LocalAppData: t.TempDir(), UserProfile: t.TempDir()},
+		List:  func() ([]Proc, error) { return []Proc{desktop}, nil },
+		Stat:  func(string) (os.FileInfo, error) { return nil, os.ErrNotExist },
+	}
+
+	busy, reason := d.Busy()
 	if !busy {
-		t.Fatal("expected busy during --updated relaunch")
+		t.Fatal("expected busy on first --updated sighting")
+	}
+	if reason == "" {
+		t.Fatal("expected reason")
+	}
+
+	// Same process still alive shortly later: settle window keeps us busy, but must not renew forever.
+	now = now.Add(10 * time.Second)
+	busy, _ = d.Busy()
+	if !busy {
+		t.Fatal("expected still busy inside UpdatedRelaunchGrace")
+	}
+
+	now = now.Add(UpdatedRelaunchGrace)
+	busy, _ = d.Busy()
+	if busy {
+		t.Fatal("expected clear after grace while desktop --updated process remains alive")
+	}
+
+	// A new PID with --updated (later update) should pause again.
+	desktop.PID = 4243
+	busy, _ = d.Busy()
+	if !busy {
+		t.Fatal("expected busy again for a new --updated process")
 	}
 }

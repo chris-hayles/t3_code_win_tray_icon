@@ -3,6 +3,7 @@ package updatebusy
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,12 +15,16 @@ const (
 	MarkerGrace = 2 * time.Minute
 	// SettleAfterInstaller is extra quiet time after the last installer/busy signal.
 	SettleAfterInstaller = 30 * time.Second
+	// UpdatedRelaunchGrace is applied once when a desktop --updated process is first seen.
+	// Electron keeps --updated for the life of that process, so later polls must not renew.
+	UpdatedRelaunchGrace = 30 * time.Second
 	// PollWhileBusy is the sleep used by the supervisor while updates are in progress.
 	PollWhileBusy = 2 * time.Second
 )
 
 // Proc is a process snapshot used by detection (testable without live Windows APIs).
 type Proc struct {
+	PID     int32
 	Name    string
 	ExePath string
 	CmdLine string
@@ -41,6 +46,8 @@ type Detector struct {
 
 	lastMarkerMtime time.Time
 	pauseUntil      time.Time
+	// seenUpdated tracks desktop --updated process identities already granted a grace window.
+	seenUpdated map[string]struct{}
 }
 
 // Busy reports whether serve restarts should wait, with a short reason for logs/UI.
@@ -163,6 +170,8 @@ func (d *Detector) installerBusy() string {
 	}
 	caches := updaterCacheDirs()
 	local := strings.ToLower(filepath.Clean(d.localAppData()))
+	liveUpdated := make(map[string]struct{})
+	now := d.nowOr()
 	for _, p := range procs {
 		name := strings.ToLower(filepath.Base(p.Name))
 		if name == "" {
@@ -180,11 +189,34 @@ func (d *Detector) installerBusy() string {
 			return "T3 Code installer is running"
 		}
 		if strings.Contains(cmd, "--updated") && looksLikeT3Desktop(name, path, cmd) {
-			d.extendPause(d.nowOr(), SettleAfterInstaller)
+			key := updatedProcKey(p)
+			liveUpdated[key] = struct{}{}
+			if d.seenUpdated == nil {
+				d.seenUpdated = map[string]struct{}{}
+			}
+			if _, seen := d.seenUpdated[key]; seen {
+				// Same post-update desktop process is still alive; do not renew the pause.
+				continue
+			}
+			d.seenUpdated[key] = struct{}{}
+			d.extendPause(now, UpdatedRelaunchGrace)
 			return "T3 Code is relaunching after an update"
 		}
 	}
+	// Drop identities that exited so a later update can pause again.
+	for key := range d.seenUpdated {
+		if _, ok := liveUpdated[key]; !ok {
+			delete(d.seenUpdated, key)
+		}
+	}
 	return ""
+}
+
+func updatedProcKey(p Proc) string {
+	if p.PID > 0 {
+		return "pid:" + strconv.FormatInt(int64(p.PID), 10)
+	}
+	return "cmd:" + strings.ToLower(p.ExePath) + "\n" + strings.ToLower(p.CmdLine)
 }
 
 func (d *Detector) nowOr() time.Time {

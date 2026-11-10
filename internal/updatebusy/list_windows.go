@@ -16,7 +16,7 @@ func DefaultList() ([]Proc, error) {
 	}
 	out := make([]Proc, 0, len(procs))
 	for _, p := range procs {
-		var item Proc
+		item := Proc{PID: p.Pid}
 		if name, err := p.Name(); err == nil {
 			item.Name = name
 		}
