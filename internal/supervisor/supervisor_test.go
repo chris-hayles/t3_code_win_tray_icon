@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"t3tray/internal/backoff"
+	"t3tray/internal/updatebusy"
 )
 
 // A server that starts successfully but exits right away must be restarted with
@@ -54,6 +55,64 @@ func TestLoop_BacksOffAfterShortLivedSuccessfulStart(t *testing.T) {
 		if sleeps[i] != want[i] {
 			t.Fatalf("sleeps = %v, want %v", sleeps, want)
 		}
+	}
+}
+
+// While a T3 Code update is busy, the loop must not start serve or advance backoff.
+func TestLoop_PausesWhileUpdateBusy(t *testing.T) {
+	s := &Supervisor{stopCh: make(chan struct{})}
+
+	var (
+		starts int
+		polls  int
+		sleeps []time.Duration
+	)
+	s.hooks = &loopHooks{
+		cliPresent: func() bool { return true },
+		updateBusy: func() (bool, string) {
+			polls++
+			if polls <= 3 {
+				return true, "T3 Code installer is running"
+			}
+			return false, ""
+		},
+		start: func() bool {
+			starts++
+			s.mu.Lock()
+			s.startedAt = time.Unix(1_700_000_000, 0)
+			s.mu.Unlock()
+			close(s.stopCh)
+			return true
+		},
+		wait: func() {
+			// Short-lived so ShouldResetUptime does not clear attempt.
+		},
+		foreignAfter: func() bool { return false },
+		now:          func() time.Time { return time.Unix(1_700_000_002, 0) },
+		sleep: func(d time.Duration) bool {
+			sleeps = append(sleeps, d)
+			return true
+		},
+	}
+
+	s.loop()
+
+	if starts != 1 {
+		t.Fatalf("starts = %d, want 1 after update cleared", starts)
+	}
+	if polls < 3 {
+		t.Fatalf("polls = %d, want at least 3 busy polls", polls)
+	}
+	for i := 0; i < 3 && i < len(sleeps); i++ {
+		if sleeps[i] != updatebusy.PollWhileBusy {
+			t.Fatalf("sleeps[%d] = %v, want %v", i, sleeps[i], updatebusy.PollWhileBusy)
+		}
+	}
+	s.mu.Lock()
+	attempt := s.attempt
+	s.mu.Unlock()
+	if attempt != 1 {
+		t.Fatalf("attempt = %d, want 1 (busy polls must not advance backoff)", attempt)
 	}
 }
 

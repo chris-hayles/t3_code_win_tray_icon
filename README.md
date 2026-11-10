@@ -4,7 +4,7 @@ Per-user Windows tray app that keeps a loopback `t3 serve` process running at `1
 
 ## What it does
 
-- On startup, runs `t3.cmd serve --host 127.0.0.1` under hidden `cmd.exe`, with automatic restart and exponential backoff.
+- On startup, runs `t3.cmd serve --host 127.0.0.1` under hidden `cmd.exe`, with automatic restart and exponential backoff. Restarts pause while a T3 Code updater/installer is running, while `~\.t3\runtime\desktop-update-restart` was touched recently, while the desktop relaunches with `--updated`, or while `t3.cmd` points at a missing desktop exe (open T3 Code once to refresh the shim).
 - Tray menu: status, **Open T3 Code**, **Copy pairing link**, **Use this server in T3 Code…** (shown only while the desktop local environment is on; this is the only action that edits desktop settings), restart (when this tray owns the server), open logs, **Run at startup**, and **Exit**.
 - Logs live in `%LOCALAPPDATA%\T3ServeTray\` (`t3-serve.log` rolls at 5 MiB; supervisor log is separate). Pairing tokens/URLs are not written to logs.
 
