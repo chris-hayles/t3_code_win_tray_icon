@@ -13,6 +13,7 @@ import (
 	"t3tray/internal/logroll"
 	"t3tray/internal/ownership"
 	"t3tray/internal/paths"
+	"t3tray/internal/updatebusy"
 	"t3tray/internal/winutil"
 )
 
@@ -24,6 +25,7 @@ const (
 	StatusRunning
 	StatusCLIMissing
 	StatusForeignOwner
+	StatusUpdateBusy
 )
 
 type Supervisor struct {
@@ -39,6 +41,9 @@ type Supervisor struct {
 	supLog         *os.File
 	foreignAtStart bool
 	loopRunning    bool
+	updateReason   string
+
+	update *updatebusy.Detector
 
 	// Seams for tests; nil means the real implementation.
 	hooks *loopHooks
@@ -47,6 +52,7 @@ type Supervisor struct {
 // loopHooks replaces the process-touching steps of the restart loop in tests.
 type loopHooks struct {
 	cliPresent   func() bool
+	updateBusy   func() (bool, string)
 	start        func() bool
 	wait         func()
 	foreignAfter func() bool
@@ -65,6 +71,7 @@ func New() (*Supervisor, error) {
 	return &Supervisor{
 		stopCh: make(chan struct{}),
 		supLog: sl,
+		update: updatebusy.NewDetector(),
 	}, nil
 }
 
@@ -120,12 +127,22 @@ func (s *Supervisor) loop() {
 			return
 		}
 		if !h.cliPresent() {
+			s.setUpdateReason("")
 			s.writeSup("t3.cmd missing")
 			if !h.sleep(2 * time.Second) {
 				return
 			}
 			continue
 		}
+		if busy, reason := h.updateBusy(); busy {
+			s.setUpdateReason(reason)
+			s.writeSup("pause restart: " + reason)
+			if !h.sleep(updatebusy.PollWhileBusy) {
+				return
+			}
+			continue
+		}
+		s.setUpdateReason("")
 		s.mu.Lock()
 		s.attempt++
 		attempt := s.attempt
@@ -170,6 +187,12 @@ func (s *Supervisor) loopHooksOrDefault() loopHooks {
 			_, err := os.Stat(paths.T3Cmd())
 			return err == nil
 		},
+		updateBusy: func() (bool, string) {
+			if s.update == nil {
+				return false, ""
+			}
+			return s.update.Busy()
+		},
 		start: s.startOnce,
 		wait:  s.waitRun,
 		foreignAfter: func() bool {
@@ -182,6 +205,9 @@ func (s *Supervisor) loopHooksOrDefault() loopHooks {
 	if t := s.hooks; t != nil {
 		if t.cliPresent != nil {
 			h.cliPresent = t.cliPresent
+		}
+		if t.updateBusy != nil {
+			h.updateBusy = t.updateBusy
 		}
 		if t.start != nil {
 			h.start = t.start
@@ -348,14 +374,25 @@ func (s *Supervisor) CurrentStatus() (Status, string) {
 	}
 	s.mu.Lock()
 	root := s.rootPID
+	updateReason := s.updateReason
+	looping := s.loopRunning && !s.stopped
 	s.mu.Unlock()
 	if root != 0 && winutil.ProcessAlive(root) {
 		return StatusWaiting, "Waiting"
 	}
-	if s.loopRunning && !s.stopped {
+	if updateReason != "" {
+		return StatusUpdateBusy, "Waiting for T3 Code update…"
+	}
+	if looping {
 		return StatusWaiting, "Waiting"
 	}
 	return StatusStopped, "Stopped"
+}
+
+func (s *Supervisor) setUpdateReason(reason string) {
+	s.mu.Lock()
+	s.updateReason = reason
+	s.mu.Unlock()
 }
 
 func (s *Supervisor) EnsureOwnedOrStart() {
